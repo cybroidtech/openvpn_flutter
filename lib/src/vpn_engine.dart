@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+
 import 'package:flutter/services.dart';
 import 'model/vpn_status.dart';
 
@@ -42,13 +43,25 @@ class OpenVPN {
   static const String _methodChannelVpnControl =
       "id.laskarmedia.openvpn_flutter/vpncontrol";
 
+  static const String _eventChannelVpnTraffic =
+      "id.laskarmedia.openvpn_flutter/vpn_traffic";
+
   ///Method channel to invoke methods from native side
   static const MethodChannel _channelControl =
       MethodChannel(_methodChannelVpnControl);
 
   ///Snapshot of stream that produced by native side
   static Stream<String> _vpnStageSnapshot() =>
-      const EventChannel(_eventChannelVpnStage).receiveBroadcastStream().cast();
+      const EventChannel(_eventChannelVpnStage)
+          .receiveBroadcastStream()
+          .distinct()
+          .cast();
+
+  static Stream<String> _vpnTrafficSnapshot() =>
+      const EventChannel(_eventChannelVpnTraffic)
+          .receiveBroadcastStream()
+          .distinct()
+          .cast();
 
   ///Timer to get vpnstatus as a loop
   ///
@@ -154,7 +167,7 @@ class OpenVPN {
   ///Get latest connection stage
   Future<VPNStage> stage() async {
     String? stage = await _channelControl.invokeMethod("stage");
-    return _strToStage(stage ?? "disconnected");
+    return _convertStage(_strToStage(stage ?? "disconnected"));
   }
 
   ///Get latest connection status
@@ -266,17 +279,47 @@ class OpenVPN {
     return VPNStage.unknown;
   }
 
+  VPNStage _convertStage(VPNStage stage) {
+    switch (stage) {
+      // for Android
+      case VPNStage.unknown:
+      case VPNStage.vpn_generate_config:
+      case VPNStage.resolve:
+      case VPNStage.wait_connection:
+      case VPNStage.tcp_connect:
+      case VPNStage.udp_connect:
+      case VPNStage.authenticating:
+      case VPNStage.get_config:
+      case VPNStage.assign_ip:
+      // for iOS
+      case VPNStage.connecting:
+      // unknown
+      case VPNStage.prepare:
+      case VPNStage.authentication:
+        return VPNStage.connecting;
+      // for Android, iOS
+      case VPNStage.connected:
+        return VPNStage.connected;
+      // for iOS
+      case VPNStage.disconnecting:
+      // for Android, iOS
+      case VPNStage.disconnected:
+      // unknown
+      case VPNStage.denied:
+      case VPNStage.error:
+      case VPNStage.exiting:
+        return VPNStage.disconnected;
+    }
+  }
+
   ///Initialize listener, called when you start connection and stoped while
   void _initializeListener() {
-    _vpnStageSnapshot().listen((event) {
-      var vpnStage = _strToStage(event);
-      onVpnStageChanged?.call(vpnStage, event);
-      if (vpnStage != VPNStage.disconnected) {
-        if (Platform.isAndroid) {
-          _createTimer();
-        } else if (Platform.isIOS && vpnStage == VPNStage.connected) {
-          _createTimer();
-        }
+    _vpnStageSnapshot().map(_strToStage).map(_convertStage).listen((event) {
+      var vpnStage = event;
+      onVpnStageChanged?.call(
+          vpnStage, vpnStage.toString().split(".").last.replaceAll("_", ""));
+      if (Platform.isIOS && vpnStage == VPNStage.connected) {
+        _createTimer();
       } else {
         _vpnStatusTimer?.cancel();
       }
