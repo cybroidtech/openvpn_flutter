@@ -46,5 +46,5 @@ android {
 }
 
 dependencies {
-    implementation 'com.github.ainusdev:openvpn_library:601d20ab'
+    implementation 'com.github.ainusdev:openvpn_library:b71fb2be46101fa0295f20adfa4b443d706986f8'
 }
